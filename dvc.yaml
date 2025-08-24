@@ -1,0 +1,16 @@
+stages:
+  preprocess:
+    cmd: python src/preprocessing.py
+    deps:
+      - src/preprocessing.py
+      - data/raw/titanic.csv
+    outs:
+      - data/processed/titanic_cleaned.csv
+
+  train:
+    cmd: python src/train.py
+    deps:
+      - src/train.py
+      - data/processed/titanic_cleaned.csv
+    outs:
+      - models/

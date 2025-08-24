@@ -1,0 +1,20 @@
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.1
+matplotlib==3.9.2
+seaborn==0.13.2
+
+# Spark
+pyspark==3.5.0
+
+# MLOps
+dvc==3.51.0
+mlflow==2.16.0
+
+# API
+fastapi==0.115.0
+uvicorn==0.30.6
+
+# Utils
+requests==2.32.3
+jupyterlab==4.2.4

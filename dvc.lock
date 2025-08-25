@@ -1,0 +1,85 @@
+schema: '2.0'
+stages:
+  preprocess:
+    cmd: python -u src/preprocessing.py --train-in data/raw/train.csv --test-in 
+      data/raw/test.csv --train-out data/processed/train_csv --test-out 
+      data/processed/test_csv
+    deps:
+    - path: data/raw/test.csv
+      hash: md5
+      md5: 7533b82eae4b582610cbd68aa636b017
+      size: 28629
+    - path: data/raw/train.csv
+      hash: md5
+      md5: 2309cc5f04782ed9bb6016d9f4e381cf
+      size: 61194
+    - path: src/preprocessing.py
+      hash: md5
+      md5: 1492a0502497074dc7ed8d759d3f5a0e
+      size: 3397
+    outs:
+    - path: data/processed/test_csv
+      hash: md5
+      md5: 2f49afb9fdc5a9c4e09a6d76f6512118.dir
+      size: 12686
+      nfiles: 4
+    - path: data/processed/train_csv
+      hash: md5
+      md5: 487cefb7645cd2345293bf5522365075.dir
+      size: 27885
+      nfiles: 4
+  train:
+    cmd: python -u src/train.py --in data/processed/train_csv --export 
+      models/model_spark --metrics models/metrics.json --model-name 
+      TitanicClassifier
+    deps:
+    - path: data/processed/train_csv
+      hash: md5
+      md5: 487cefb7645cd2345293bf5522365075.dir
+      size: 27885
+      nfiles: 4
+    - path: src/train.py
+      hash: md5
+      md5: b53e328326e44b8a4c623094472fed84
+      size: 5283
+      isexec: true
+    outs:
+    - path: models/metrics.json
+      hash: md5
+      md5: 147c93fde9d827d3a3c9d870fa0fbaa6
+      size: 98
+    - path: models/model_spark
+      hash: md5
+      md5: 7f28b42dcd725f8cc2d6c5f2ff9be79a.dir
+      size: 284859
+      nfiles: 28
+  evaluate:
+    cmd: python -u src/evaluate.py --in data/processed/test_csv --model-dir 
+      models/model_spark --out models/eval_metrics.json --predictions 
+      models/predictions_csv
+    deps:
+    - path: data/processed/test_csv
+      hash: md5
+      md5: 2f49afb9fdc5a9c4e09a6d76f6512118.dir
+      size: 12686
+      nfiles: 4
+    - path: models/model_spark
+      hash: md5
+      md5: 7f28b42dcd725f8cc2d6c5f2ff9be79a.dir
+      size: 284859
+      nfiles: 28
+    - path: src/evaluate.py
+      hash: md5
+      md5: 15a8a3a2b79fadcf900d561275b6aa1c
+      size: 3067
+      isexec: true
+    outs:
+    - path: models/eval_metrics.json
+      hash: md5
+      md5: ec6e288aded8503d1c49124f0b6bf430
+      size: 26
+    - path: models/predictions_csv
+      hash: md5
+      md5: 2ea800ad098fcb9f8f10e0fe45ed992c.dir
+      size: 21723
+      nfiles: 4

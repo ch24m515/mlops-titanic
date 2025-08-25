@@ -1,16 +1,43 @@
 stages:
   preprocess:
-    cmd: python src/preprocessing.py
+    cmd: python src/preprocessing.py \
+          --train-in data/raw/train.csv \
+          --test-in  data/raw/test.csv  \
+          --train-out data/processed/train_csv \
+          --test-out  data/processed/test_csv
     deps:
       - src/preprocessing.py
-      - data/raw/titanic.csv
+      - data/raw/train.csv
+      - data/raw/test.csv
     outs:
-      - data/processed/titanic_cleaned.csv
+      - data/processed/train_csv
+      - data/processed/test_csv
 
   train:
-    cmd: python src/train.py
+    cmd: python src/train.py \
+          --in data/processed/train_csv \
+          --export models/model_spark \
+          --metrics models/metrics.json \
+          --model-name TitanicClassifier
     deps:
       - src/train.py
-      - data/processed/titanic_cleaned.csv
+      - data/processed/train_csv
     outs:
-      - models/
+      - models/model_spark
+    metrics:
+      - models/metrics.json
+
+  evaluate:
+    cmd: python src/evaluate.py \
+          --in data/processed/test_csv \
+          --model-dir models/model_spark \
+          --out models/eval_metrics.json \
+          --predictions models/predictions_csv
+    deps:
+      - src/evaluate.py
+      - data/processed/test_csv
+      - models/model_spark
+    outs:
+      - models/predictions_csv
+    metrics:
+      - models/eval_metrics.json

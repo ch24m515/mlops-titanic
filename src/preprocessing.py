@@ -1,54 +1,70 @@
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, when
-from pyspark.ml.feature import StringIndexer, VectorAssembler, StandardScaler
+# src/preprocessing.py
+from __future__ import annotations
+import argparse
+from typing import List
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import functions as F
 
-def preprocess(input_path: str, output_path: str):
-    spark = SparkSession.builder.appName("TitanicPreprocessing").getOrCreate()
-    
-    # Load data
-    df = spark.read.csv(input_path, header=True, inferSchema=True)
-    
-    # Drop high-cardinality / leakage columns
-    df = df.drop("Name", "Ticket", "Cabin")
-    
-    # Handle missing Age with median
-    median_age = df.approxQuantile("Age", [0.5], 0.0)[0]
-    df = df.withColumn("Age", when(col("Age").isNull(), median_age).otherwise(col("Age")))
-    
-    # Handle missing Fare with median
-    median_fare = df.approxQuantile("Fare", [0.5], 0.0)[0]
-    df = df.withColumn("Fare", when(col("Fare").isNull(), median_fare).otherwise(col("Fare")))
-    
-    # Fill missing Embarked with most frequent
-    most_common_embarked = df.groupBy("Embarked").count().orderBy(col("count").desc()).first()["Embarked"]
-    df = df.withColumn("Embarked", when(col("Embarked").isNull(), most_common_embarked).otherwise(col("Embarked")))
-    
-    # Encode categorical features
-    indexers = [
-        StringIndexer(inputCol="Sex", outputCol="Sex_indexed"),
-        StringIndexer(inputCol="Embarked", outputCol="Embarked_indexed"),
-        StringIndexer(inputCol="Pclass", outputCol="Pclass_indexed")
-    ]
-    for indexer in indexers:
-        df = indexer.fit(df).transform(df)
-    
-    # Assemble features
-    assembler = VectorAssembler(
-        inputCols=["Pclass_indexed", "Sex_indexed", "Embarked_indexed", "Age", "SibSp", "Parch", "Fare"],
-        outputCol="features_raw"
+def spark_session(app="titanic-preprocess"):
+    return (
+        SparkSession.builder.appName(app)
+        .config("spark.sql.session.timeZone", "UTC")
+        .getOrCreate()
     )
-    df = assembler.transform(df)
-    
-    # Scale features
-    scaler = StandardScaler(inputCol="features_raw", outputCol="features", withStd=True, withMean=True)
-    df = scaler.fit(df).transform(df)
-    
-    # Keep only label + features
-    df = df.select(col("Survived").alias("label"), "features")
-    
-    # Save processed dataset as Parquet (scalable format)
-    df.coalesce(1).write.mode("overwrite").parquet(output_path)
-    print(f"✅ Preprocessed data saved at {output_path}")
+
+def featurize(df: DataFrame, is_train: bool, label_col: str = "Survived") -> DataFrame:
+    # Basic encodings
+    df = df.withColumn("Sex", F.when(F.col("Sex") == "male", 1).otherwise(0))
+    df = df.withColumn(
+        "Embarked",
+        F.when(F.col("Embarked") == "S", 0)
+         .when(F.col("Embarked") == "C", 1)
+         .when(F.col("Embarked") == "Q", 2)
+         .otherwise(0),
+    )
+
+    # Fill NA
+    df = df.fillna({
+        "Age": 28.0, "Fare": 14.0,
+        "SibSp": 0, "Parch": 0,
+        "Pclass": 3, "Embarked": 0
+    })
+
+    # Engineered features
+    df = df.withColumn("FamilySize", F.col("SibSp") + F.col("Parch") + F.lit(1))
+    df = df.withColumn("IsAlone", F.when(F.col("FamilySize") == 1, 1).otherwise(0))
+
+    keep: List[str] = [
+        "PassengerId","Pclass","Sex","Age","SibSp","Parch",
+        "Fare","Embarked","FamilySize","IsAlone"
+    ]
+    if is_train and label_col in df.columns:
+        keep.append(label_col)
+    return df.select(*[c for c in keep if c in df.columns])
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--train-in", required=True)
+    ap.add_argument("--test-in", required=True)
+    ap.add_argument("--train-out", required=True)  # e.g. data/processed/train_csv
+    ap.add_argument("--test-out", required=True)   # e.g. data/processed/test_csv
+    ap.add_argument("--label-col", default="Survived")
+    args = ap.parse_args()
+
+    spark = spark_session()
+    train = spark.read.csv(args.train_in, header=True, inferSchema=True)
+    test  = spark.read.csv(args.test_in,  header=True, inferSchema=True)
+
+    train_p = featurize(train, is_train=True,  label_col=args.label_col)
+    test_p  = featurize(test,  is_train=False, label_col=args.label_col)
+
+    # Write single-file CSV directories that match dvc.yaml
+    (train_p.coalesce(1)
+        .write.mode("overwrite").option("header", True).csv(args.train_out))
+    (test_p.coalesce(1)
+        .write.mode("overwrite").option("header", True).csv(args.test_out))
+
+    spark.stop()
 
 if __name__ == "__main__":
-    preprocess("data/raw/titanic.csv", "data/processed/titanic_cleaned")
+    main()

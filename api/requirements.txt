@@ -1,0 +1,6 @@
+# api/requirements.txt
+fastapi
+uvicorn[standard]
+mlflow>=2.0.0
+pandas
+scikit-learn

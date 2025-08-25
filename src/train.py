@@ -14,9 +14,15 @@ from mlflow.tracking import MlflowClient
 FEATURES = ["Pclass", "Sex", "Age", "SibSp", "Parch", "Fare", "Embarked", "FamilySize", "IsAlone"]
 
 def spark_session(app="titanic-train"):
-    return SparkSession.builder.appName(app).getOrCreate()
+    """Creates a SparkSession configured for a local environment."""
+    return (
+        SparkSession.builder.appName(app)
+        .config("spark.driver.host", "127.0.0.1")  # Fix for Spark RPC errors
+        .getOrCreate()
+    )
 
 def f1_from(pred, label="label", predcol="prediction") -> float:
+    """Calculates F1 score from a predictions DataFrame."""
     agg = pred.groupBy().agg(
         F.sum(F.when((F.col(label)==1) & (F.col(predcol)==1),1).otherwise(0)).alias("tp"),
         F.sum(F.when((F.col(label)==0) & (F.col(predcol)==1),1).otherwise(0)).alias("fp"),
@@ -33,12 +39,9 @@ def get_current_production_auc(model_name: str) -> float | None:
     try:
         versions = client.search_model_versions(f"name='{model_name}'")
         prod_versions = [v for v in versions if v.current_stage == "Production"]
-        if not prod_versions:
-            return None
-        
+        if not prod_versions: return None
         prod_versions.sort(key=lambda v: int(v.creation_timestamp), reverse=True)
-        run_id = prod_versions[0].run_id
-        run = client.get_run(run_id)
+        run = client.get_run(prod_versions[0].run_id)
         return run.data.metrics.get("val_auc")
     except Exception:
         return None
@@ -59,24 +62,22 @@ def main():
 
     train, valid = df.randomSplit([0.8, 0.2], seed=42)
     assembler = VectorAssembler(inputCols=FEATURES, outputCol="features_raw")
-    scaler    = StandardScaler(inputCol="features_raw", outputCol="features", withStd=True, withMean=False)
+    scaler = StandardScaler(inputCol="features_raw", outputCol="features", withStd=True, withMean=False)
 
     candidates = {
-        "LogReg":       LogisticRegression(featuresCol="features", labelCol="label", maxIter=200),
+        "LogReg": LogisticRegression(featuresCol="features", labelCol="label", maxIter=200),
         "RandomForest": RandomForestClassifier(featuresCol="features", labelCol="label", numTrees=200, maxDepth=8),
-        "GBT":          GBTClassifier(featuresCol="features", labelCol="label", maxIter=100, maxDepth=5),
+        "GBT": GBTClassifier(featuresCol="features", labelCol="label", maxIter=100, maxDepth=5),
     }
     evaluator = BinaryClassificationEvaluator(labelCol="label", rawPredictionCol="rawPrediction", metricName="areaUnderROC")
 
     best = {"name": None, "auc": -1.0, "f1": -1.0, "model": None, "run_id": None}
 
     mlflow.set_experiment(args.model_name)
-    # --- DEVELOPMENT RUNS ---
     for name, est in candidates.items():
         with mlflow.start_run(run_name=f"DEV_{name}") as run:
-            pipe = Pipeline(stages=[assembler, scaler, est])
-            model = pipe.fit(train)
-            pred  = model.transform(valid)
+            model = Pipeline(stages=[assembler, scaler, est]).fit(train)
+            pred = model.transform(valid)
             auc = float(evaluator.evaluate(pred))
             f1v = float(f1_from(pred))
 
@@ -84,25 +85,20 @@ def main():
             mlflow.log_metrics({"val_auc": auc, "val_f1": f1v})
             mlflow.spark.log_model(model, artifact_path="spark_model")
 
-            print(f"[DEV {name}] AUC={auc:.4f}  F1={f1v:.4f}")
+            print(f"[DEV {name}] AUC={auc:.4f} F1={f1v:.4f}")
             if auc > best["auc"] or (auc == best["auc"] and f1v > best["f1"]):
                 best.update({"name": name, "auc": auc, "f1": f1v, "model": model, "run_id": run.info.run_id})
 
-    # Save best model for DVC
     os.makedirs(os.path.dirname(args.metrics), exist_ok=True)
     best["model"].write().overwrite().save(args.export)
     with open(args.metrics, "w") as f:
         json.dump({"best_model": best["name"], "val_auc": best["auc"], "val_f1": best["f1"]}, f, indent=2)
-    print(f"[BEST] {best['name']} -> {args.export} (AUC={best['auc']:.4f}, F1={best['f1']:.4f})")
+    print(f"[BEST] {best['name']} -> {args.export} (AUC={best['auc']:.4f})")
 
-    # --- REGISTRY LIFECYCLE: Staging -> Production ---
     client = MlflowClient()
     reg = mlflow.register_model(f"runs:/{best['run_id']}/spark_model", args.model_name)
-    
-    # Move to Staging
     client.transition_model_version_stage(name=args.model_name, version=reg.version, stage="Staging")
 
-    # Check for promotion to Production
     prod_auc = get_current_production_auc(args.model_name)
     if (prod_auc is None) or (best["auc"] > prod_auc):
         client.transition_model_version_stage(
@@ -110,7 +106,7 @@ def main():
         )
         print(f"[PROMOTION] Model v{reg.version} promoted to Production.")
     else:
-        print(f"[STAGING ONLY] Model v{reg.version} kept in Staging as it did not outperform Production.")
+        print(f"[STAGING ONLY] Model v{reg.version} kept in Staging.")
 
     spark.stop()
 

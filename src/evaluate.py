@@ -8,9 +8,15 @@ from pyspark.ml.evaluation import BinaryClassificationEvaluator
 import mlflow
 
 def spark_session(app="titanic-eval"):
-    return SparkSession.builder.appName(app).getOrCreate()
+    """Creates a SparkSession configured for a local environment."""
+    return (
+        SparkSession.builder.appName(app)
+        .config("spark.driver.host", "127.0.0.1")  # Fix for Spark RPC errors
+        .getOrCreate()
+    )
 
 def f1_from(pred, label="label", predcol="prediction") -> float:
+    """Calculates F1 score from a predictions DataFrame."""
     agg = pred.groupBy().agg(
         F.sum(F.when((F.col(label)==1) & (F.col(predcol)==1), 1).otherwise(0)).alias("tp"),
         F.sum(F.when((F.col(label)==0) & (F.col(predcol)==1), 1).otherwise(0)).alias("fp"),
@@ -44,28 +50,26 @@ def main():
     with mlflow.start_run(run_name="EVALUATE_ON_TEST_DATA") as run:
         pred = model.transform(df)
 
+        metrics = {}
         if has_label:
             evaluator = BinaryClassificationEvaluator(labelCol="label", rawPredictionCol="rawPrediction", metricName="areaUnderROC")
             auc = float(evaluator.evaluate(pred))
             f1v = float(f1_from(pred))
             metrics = {"test_auc": auc, "test_f1": f1v}
-            mlflow.log_metrics(metrics)
         else:
             metrics = {"n_predictions": pred.count()}
-            mlflow.log_metrics(metrics)
+        
+        mlflow.log_metrics(metrics)
 
         os.makedirs(os.path.dirname(args.out), exist_ok=True)
         with open(args.out, "w") as f:
             json.dump(metrics, f, indent=2)
 
-        # Save predictions
         pred_out = pred.withColumn("probability_str", F.col("probability").cast("string"))
         cols = ["PassengerId", "prediction", "probability_str"]
         (pred_out.select(*[c for c in cols if c in pred_out.columns])
-                .coalesce(1)
-                .write.mode("overwrite")
-                .option("header", True)
-                .csv(args.predictions))
+                .coalesce(1).write.mode("overwrite")
+                .option("header", True).csv(args.predictions))
 
     print(f"[EVAL] Metrics: {metrics}")
     spark.stop()

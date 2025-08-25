@@ -5,15 +5,16 @@ from pyspark.sql import SparkSession
 from pyspark.ml import PipelineModel
 from pyspark.sql import functions as F
 from pyspark.ml.evaluation import BinaryClassificationEvaluator
+import mlflow
 
 def spark_session(app="titanic-eval"):
     return SparkSession.builder.appName(app).getOrCreate()
 
 def f1_from(pred, label="label", predcol="prediction") -> float:
     agg = pred.groupBy().agg(
-        F.sum(F.when((F.col(label)==1) & (F.col(predcol)==1),1).otherwise(0)).alias("tp"),
-        F.sum(F.when((F.col(label)==0) & (F.col(predcol)==1),1).otherwise(0)).alias("fp"),
-        F.sum(F.when((F.col(label)==1) & (F.col(predcol)==0),1).otherwise(0)).alias("fn"),
+        F.sum(F.when((F.col(label)==1) & (F.col(predcol)==1), 1).otherwise(0)).alias("tp"),
+        F.sum(F.when((F.col(label)==0) & (F.col(predcol)==1), 1).otherwise(0)).alias("fp"),
+        F.sum(F.when((F.col(label)==1) & (F.col(predcol)==0), 1).otherwise(0)).alias("fn"),
     ).collect()[0]
     tp, fp, fn = agg["tp"], agg["fp"], agg["fn"]
     prec = tp/(tp+fp) if (tp+fp) else 0.0
@@ -22,11 +23,12 @@ def f1_from(pred, label="label", predcol="prediction") -> float:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in", dest="in_path", required=True)     # data/processed/test_csv
-    ap.add_argument("--model-dir", required=True)              # models/model_spark
-    ap.add_argument("--out", required=True)                    # models/eval_metrics.json
+    ap.add_argument("--in", dest="in_path", required=True)
+    ap.add_argument("--model-dir", required=True)
+    ap.add_argument("--out", required=True)
     ap.add_argument("--predictions", default="models/predictions_csv")
     ap.add_argument("--label-col", default="Survived")
+    ap.add_argument("--experiment", default="TitanicClassifier")
     args = ap.parse_args()
 
     spark = spark_session()
@@ -37,27 +39,35 @@ def main():
         df = df.withColumnRenamed(args.label_col, "label")
 
     model = PipelineModel.load(args.model_dir)
-    pred = model.transform(df)
 
-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+    mlflow.set_experiment(args.experiment)
+    with mlflow.start_run(run_name="EVALUATE_ON_TEST_DATA") as run:
+        pred = model.transform(df)
 
-    if has_label:
-        evaluator = BinaryClassificationEvaluator(labelCol="label", rawPredictionCol="rawPrediction", metricName="areaUnderROC")
-        auc = float(evaluator.evaluate(pred))
-        f1v = float(f1_from(pred))
-        metrics = {"test_auc": auc, "test_f1": f1v}
-    else:
-        metrics = {"n_predictions": pred.count()}
+        if has_label:
+            evaluator = BinaryClassificationEvaluator(labelCol="label", rawPredictionCol="rawPrediction", metricName="areaUnderROC")
+            auc = float(evaluator.evaluate(pred))
+            f1v = float(f1_from(pred))
+            metrics = {"test_auc": auc, "test_f1": f1v}
+            mlflow.log_metrics(metrics)
+        else:
+            metrics = {"n_predictions": pred.count()}
+            mlflow.log_metrics(metrics)
 
-    with open(args.out, "w") as f:
-        json.dump(metrics, f, indent=2)
+        os.makedirs(os.path.dirname(args.out), exist_ok=True)
+        with open(args.out, "w") as f:
+            json.dump(metrics, f, indent=2)
 
-    # Save predictions as CSV (Spark folder)
-    (pred.select("PassengerId","prediction","probability")
-         .coalesce(1)
-         .write.mode("overwrite").option("header", True).csv(args.predictions))
+        # Save predictions
+        pred_out = pred.withColumn("probability_str", F.col("probability").cast("string"))
+        cols = ["PassengerId", "prediction", "probability_str"]
+        (pred_out.select(*[c for c in cols if c in pred_out.columns])
+                .coalesce(1)
+                .write.mode("overwrite")
+                .option("header", True)
+                .csv(args.predictions))
 
-    print(f"[EVAL] {metrics}")
+    print(f"[EVAL] Metrics: {metrics}")
     spark.stop()
 
 if __name__ == "__main__":

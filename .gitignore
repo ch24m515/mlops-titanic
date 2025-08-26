@@ -1,0 +1,30 @@
+# Python virtual environment
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Spark Installation files
+spark-*/
+*.tgz
+
+# DVC internal cache and temp files
+.dvc/cache
+.dvc/tmp
+
+# MLflow files (database and artifacts)
+mlruns/
+mlflow.db
+sqlite/
+*.db
+
+# IDE and editor configuration
+.vscode/
+.idea/
+
+# Data and Model outputs tracked by DVC, not Git
+# (Git only needs the .dvc files)
+data/processed/
+models/

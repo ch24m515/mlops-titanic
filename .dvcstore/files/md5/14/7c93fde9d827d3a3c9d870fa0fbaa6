@@ -1,0 +1,5 @@
+{
+  "best_model": "RandomForest",
+  "val_auc": 0.910065059318791,
+  "val_f1": 0.7999999999999999
+}

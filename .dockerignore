@@ -1,0 +1,31 @@
+# Ignore the Spark installation files
+spark-*
+
+# Ignore the Python virtual environment
+.venv/
+venv/
+
+# Ignore the DVC cache and internal files
+.dvc/cache
+.dvc/tmp
+
+# Ignore the MLflow experiment artifacts and database
+mlruns/
+mlflow.db
+
+# Ignore notebooks and IDE-specific folders
+notebooks/
+.vscode/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore the Git directory
+.git/
+
+# Ignore raw and processed data (not needed in API image)
+data/
+
+# Ignore model outputs (the image will fetch from MLflow)
+models/
